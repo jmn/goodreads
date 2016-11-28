@@ -3,105 +3,46 @@
 
 -- Goodreads API and Client as a single file
 -- TODO: Use Data.AppSettings instead of old Gr.Config
-module G (getBooksFromShelf, getUserFollowers, getFindAuthorByName) where
-
-import Control.Exception (SomeException)
+module G (doShowShelf, doFindAuthor, getBooksFromShelf, getUserFollowers, getFindAuthorByName) where
+import Types
+import Control.Exception (SomeException, try)
 import Control.Monad.Catch (MonadThrow)
 import qualified Data.ByteString as BS
 import Data.ByteString.Char8 (pack)
 import Data.ByteString.UTF8 (ByteString)
 import qualified Data.ByteString.UTF8 as BSU
-import Data.Foldable (for_)
 import Data.List
 import qualified Data.Map as Map
 import Data.Maybe (catMaybes)
 import Data.Monoid ((<>))
-import Data.Monoid ((<>))
 import Data.Text (Text)
 import Data.Text.Lazy.Encoding (decodeUtf8)
-import Data.Version (showVersion)
 import Network.HTTP (urlEncode)
-import Network.HTTP.Client (Manager)
-import Network.URL (exportParams)
+import Data.Foldable (for_)
 import Web.Authenticate.OAuth
-
-import Network.HTTP.Client -- hiding (httpLbs)
+import Network.URL (exportParams)
+-- import Network.HTTP.Client -- hiding (httpLbs)
 import Network.HTTP.Types.Header (HeaderName)
 import Network.HTTP.Simple
-       (Request, parseRequest, getResponseHeader, setRequestQueryString,
+       (Request, Response, parseRequest, getResponseHeader, setRequestQueryString,
         getResponseBody)
 import Text.XML.Lens (Document, Element, (^?), (./), (^..), (??), root,  el, text, lengthOf)
-import Options.Applicative
 import qualified Data.ByteString.Lazy.Char8 as L8
-import Network.HTTP.Client (newManager, responseBody) -- hiding (httpLbs)
+import Network.HTTP.Client (newManager, responseBody, httpLbs) -- hiding (httpLbs)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Text.XML (parseText_, def)
 import qualified Data.CaseInsensitive as CI
 import qualified Data.ByteString.Char8 as BytCh
-import qualified Paths_g as Meta (version)
-import Network.HTTP.Client (Manager, Request)
+import Network.HTTP.Client (Manager, Request, newManager, responseBody)
 import Web.Authenticate.OAuth
        (oauthConsumerKey, oauthConsumerSecret, newOAuth, unCredential,
-        newCredential, signOAuth)
+        newCredential, signOAuth, Credential (Credential))
 import System.Environment (getEnv)
 import Control.Monad.IO.Class (liftIO)
 import Data.AppSettings (Setting(..), GetSetting(..),
-  FileLocation(Path), readSettings, DefaultConfig)
+  FileLocation(Path), readSettings, DefaultConfig, FileLocation( AutoFromAppName), getDefaultConfig, setting, saveSettings, emptyDefaultConfig)
   
-data Gr = Gr         { config :: GrConfig
-                     , connectionManager :: Manager
-                     , appCredentials :: AppCredentials
-                     }
-
-data GrConfig = GrConfig { loginCredentials :: Credential
-                         , defaultUserID    :: Maybe Int
-                                 } deriving (Show, Eq)
-
-
-type AuthorName = String
-data User = User
-    { uid :: Int
-    , name :: Maybe Text} deriving (Show)
-
 -- Begin Auth Stuff
-data AppCredentials = AppCredentials { applicationKey :: BS.ByteString
-                                     , applicationSecret :: BS.ByteString
-                                     } deriving (Show, Eq)
-
-type AuthHandler = String -> IO BS.ByteString
-
-data AuthRequest = AuthRequest { applicationName :: String
-                               , expiration :: Maybe Int
-                               , scope :: [AuthScope]
-                               , requestAppCredentials :: AppCredentials
-                               } deriving (Show)
-
-data AuthScope = Read
-               | Write
-
-instance Show AuthScope where
-    show Read = "read"
-    show Write = "write"
-
-data Book = Book {
-    title :: Text
-  , pub_yr :: Text  -- FIXME: Use time/proper type
-    } deriving Show
-
-type ShelfName = String
-type UserID = Int
-
-data Options = Options AppOptions Command
-data Command
-     = FindAuthor AuthorName 
-     | ShowFollowers UserID
-     | ShowShelf ShelfName UserID
-
-data AppOptions = AppOptions
-    { apiKey :: Maybe String
-    , limit  :: Maybe Int
-    }
-    
 getKeysFromEnv = do
   grApiKey    <- getEnv "GOODREADS_API_KEY"
   grApiSecret <- getEnv "GOODREADS_API_SECRET"
@@ -119,6 +60,7 @@ signWithConfig gr request = do
      let myoauth = newOAuth { oauthConsumerKey = applicationKey appCreds, oauthConsumerSecret = applicationSecret appCreds }
      signOAuth myoauth mycred request
     
+
 -- defaultConfig :: Manager -> AuthRequest -> AuthHandler -> IO GrConfig
 -- defaultConfig man req authMethod = do
 --     credentials <- grAuthenticate man req authMethod
@@ -130,18 +72,27 @@ signWithConfig gr request = do
 --     writeConfig cfg
 --     return $ Gr cfg man (requestAppCredentials req)
 
+                                
 initGr :: Manager -> AuthRequest -> AuthHandler -> IO Gr
 initGr man req authMethod = do
      readResult <- try $ readSettings (AutoFromAppName "test")
      case readResult of
- 	Right (conf, GetSetting getSetting) -> do
- 		let defUser = getSetting defaultUser
-                return defUser
- 		-- saveSettings emptyDefaultConfig (AutoFromAppName "test") conf
-                --    cfg <- liftIO $ loadConfig $ defaultConfig man req authMethod
-                --    writeConfig cfg
-                --     return $ Gr cfg man (requestAppCredentials req)
-        Left (x :: SomeException) -> error "Error reading the config file!"
+       Right (conf, GetSetting getSetting) -> do -- if there is a setting file it should always contain oauth credentials. (?)
+                let cfg = GrConfig {loginCredentials = newCredential (pack $ getSetting oAuthToken) (pack $ getSetting oAuthSecret)
+                                  , defaultUserID = Just (getSetting defaultUser)}
+                saveSettings emptyDefaultConfig (AutoFromAppName "test") conf                          
+                return $ Gr cfg man (requestAppCredentials req)
+
+                -- Load OauthToken and Secret from Config, if
+                -- if there is a token/secret in config, use it, otherwise go authorize
+
+       Left (x :: SomeException) -> do
+           credentials <- grAuthenticate man req authMethod
+           let defConf = GrConfig credentials Nothing
+           -- saveSettings emptyDefaultConfig (AutoFromAppName "test") conf                          
+           return $ Gr defConf man (requestAppCredentials req)
+
+-- error "Error reading the config file!"
 
 
 numReviews doc = lengthOf ?? doc $ root . el "GoodreadsResponse" ./ el "reviews" ./ el "review"
@@ -165,7 +116,6 @@ parseBook :: Element -> Maybe Book
 parseBook e = Book
   <$> t "title"
   <*> t "description" -- FIXME: Handle non existing fields
---  <*> t "author"
 
   where t n = e ^? el "review" ./ el "book" ./ el n . text
 
@@ -269,6 +219,24 @@ getBooksFromShelf conMan user shelf =
           ]  :: [(ByteString, Maybe ByteString)]
 
 
+
+-- defaultUser :: Maybe Int -- TODO fetch from config file
+-- defaultUser = Just 
+
+defaultUser :: Setting Int
+defaultUser = Setting "defaultUser" 35682014
+-- c :: Setting Credential
+oAuthToken :: Setting String
+oAuthToken = Setting "oAuthSecret" ""
+
+oAuthSecret :: Setting String
+oAuthSecret = Setting "oAuthToken" ""
+
+defaultConfig :: DefaultConfig
+defaultConfig = getDefaultConfig $ do
+    setting defaultUser
+    
+
 doShowShelf :: AppOptions -> ShelfName -> UserID -> IO ()
 doShowShelf opts shelf uID = do
     gr <- doGr opts
@@ -278,7 +246,7 @@ doShowShelf opts shelf uID = do
             gr
             User
             { uid = uID
-            , G.name = Nothing
+            , name = Nothing
             }
             shelf
     let eBooks = respToBooks r
@@ -296,91 +264,24 @@ doFindAuthor opts authorName = do
 
 doGr :: AppOptions -> IO Gr
 doGr app = do
-    keys <-
+    keys <- try $
         case apiKey app of
-            Just k ->
+            Just k -> -- Key was provided as argument
                 return
                     AppCredentials
                     { applicationKey = pack k
                     , applicationSecret = pack "NOT IMPLEMENTED"
                     }
             Nothing -> getKeysFromEnv
-    let authReq =
-            AuthRequest
-            { applicationName = "Gr"
-            , expiration = Nothing
-            , scope = [Read, Write]
-            , requestAppCredentials = keys
-            }
-    manager <- newManager tlsManagerSettings
-    initGr manager authReq defaultAuthHandler
-
--- defaultUser :: Maybe Int -- TODO fetch from config file
--- defaultUser = Just 
-
-defaultUser :: Setting Int
-defaultUser = Setting "defaultUser" 35682014
--- c :: Setting Credential
-
-defaultConfig :: DefaultConfig
-defaultConfig = getDefaultConfig $ do
-    setting defaultUser
-    
-appOptions :: Parser AppOptions
-appOptions = AppOptions
-    <$> optional (strOption
-        ( short 'k' <> long "with-key"
-       <> metavar "APIKEY"
-       <> help "Supply the API key as a command line argument."))
-
-    <*> optional (option auto
-        ( short 'l' <> long "limit"
-       <> metavar "LIMIT"
-       <> help "Limit the number of responses to LIMIT" ))
-    
--- | Helper Function     
-withInfo :: Parser a -> String -> ParserInfo a
-withInfo opts desc = info (helper <*> opts) $ progDesc desc
-
-parseOptions :: Parser Options
-parseOptions = Options <$> appOptions <* version <*> parseCommand 
-
-version :: Parser (a -> a)
-version = infoOption (Data.Version.showVersion Meta.version)
-  (  short 'v'
-  <> long "version"
-  <> help "Print version information" )
-  
-
--- Commands
-parseCommand :: Parser Command
-parseCommand = subparser $
-    command "findAuthor"    (parseFindAuthor    `withInfo` "Find an author") <>
-    command "showFollowers" (parseShowFollowers `withInfo` "Show followers of user with id") <>
-    command "show"          (parseShowShelf defaultUser   `withInfo` "Show a shelf, e.g. to-read")
-
-parseFindAuthor :: Parser Command
-parseFindAuthor = FindAuthor
-    <$> argument str (metavar "AUTHORNAME")
-
-parseShowFollowers :: Parser Command
-parseShowFollowers = ShowFollowers
-    <$> argument auto (metavar "GOODREADS_USER_ID") -- FIXME arguments to commands?
-
-
-parseShowShelf :: Maybe Int -> Parser Command
-parseShowShelf mDef = ShowShelf
-    <$> argument str  (metavar "SHELFNAME")
-    <*> argument auto (metavar "GOODREADS_USER_ID" <> maybe mempty value mDef)  -- if default-user-id is defined in config, use it as default.
-
-main :: IO ()
-main =
-    run =<<
-    execParser (parseOptions `withInfo` "Interact with the Goodreads API. See --help for options.")
-
-run :: Options -> IO ()
-run (Options app cmd) =
-    case cmd of
-        FindAuthor authorName -> doFindAuthor app authorName
-        ShowFollowers uID -> print uID
-        ShowShelf shelfName uID -> doShowShelf app shelfName uID
+    case keys of
+       Left (x :: SomeException) -> error "Error Loading API Keys: Set GOODREADS_API_KEY, GOODREADS_API_SECRET"
+       Right k -> do
+           let authReq =
+                 AuthRequest
+                 { applicationName = "Gr"
+                 , expiration = Nothing
+                 , scope = [Read, Write]
+                 , requestAppCredentials = k
+                 }
+           manager <- newManager tlsManagerSettings
+           initGr manager authReq defaultAuthHandler
