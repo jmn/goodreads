@@ -1,3 +1,4 @@
+{-# OPTIONS -Wall #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -5,7 +6,8 @@
 -- TODO: Use Data.AppSettings instead of old Gr.Config
 module G (doShowShelf, doFindAuthor, getBooksFromShelf, getUserFollowers, getFindAuthorByName) where
 import Types
-import Control.Exception (SomeException, try)
+import Data.Text (Text)
+import Control.Exception (SomeException, try, throw)
 import Control.Monad.Catch (MonadThrow)
 import qualified Data.ByteString as BS
 import Data.ByteString.Char8 (pack)
@@ -15,7 +17,6 @@ import Data.List
 import qualified Data.Map as Map
 import Data.Maybe (catMaybes)
 import Data.Monoid ((<>))
-import Data.Text (Text)
 import Data.Text.Lazy.Encoding (decodeUtf8)
 import Network.HTTP (urlEncode)
 import Data.Foldable (for_)
@@ -32,17 +33,18 @@ import Network.HTTP.Client (newManager, responseBody, httpLbs) -- hiding (httpLb
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Text.XML (parseText_, def)
 import qualified Data.CaseInsensitive as CI
+import TextShow (printT)
 import qualified Data.ByteString.Char8 as BytCh
 import Network.HTTP.Client (Manager, Request, newManager, responseBody)
 import Web.Authenticate.OAuth
        (oauthConsumerKey, oauthConsumerSecret, newOAuth, unCredential,
         newCredential, signOAuth, Credential (Credential))
 import System.Environment (getEnv)
-import Control.Monad.IO.Class (liftIO)
 import Data.AppSettings (Setting(..), GetSetting(..),
-  FileLocation(Path), readSettings, DefaultConfig, FileLocation( AutoFromAppName), getDefaultConfig, setting, saveSettings, emptyDefaultConfig)
+  FileLocation(Path), readSettings, DefaultConfig, FileLocation( AutoFromAppName), getDefaultConfig, setting, saveSettings, emptyDefaultConfig, setSetting, ParseException)
   
 -- Begin Auth Stuff
+getKeysFromEnv :: IO AppCredentials
 getKeysFromEnv = do
   grApiKey    <- getEnv "GOODREADS_API_KEY"
   grApiSecret <- getEnv "GOODREADS_API_SECRET"
@@ -61,44 +63,59 @@ signWithConfig gr request = do
      signOAuth myoauth mycred request
     
 
--- defaultConfig :: Manager -> AuthRequest -> AuthHandler -> IO GrConfig
--- defaultConfig man req authMethod = do
---     credentials <- grAuthenticate man req authMethod
---     return $ GrConfig credentials Nothing
-
 -- initGr :: Manager -> AuthRequest -> AuthHandler -> IO Gr
 -- initGr man req authMethod = do
 --     cfg <- liftIO $ loadConfig $ defaultConfig man req authMethod
 --     writeConfig cfg
 --     return $ Gr cfg man (requestAppCredentials req)
 
-                                
+-- | Loads settings file - or default settings and creates new
+-- settings file - into Gr.
 initGr :: Manager -> AuthRequest -> AuthHandler -> IO Gr
 initGr man req authMethod = do
-     readResult <- try $ readSettings (AutoFromAppName "test")
+     readResult <- try $ readSettings (AutoFromAppName "goodreads")
      case readResult of
        Right (conf, GetSetting getSetting) -> do -- if there is a setting file it should always contain oauth credentials. (?)
-                let cfg = GrConfig {loginCredentials = newCredential (pack $ getSetting oAuthToken) (pack $ getSetting oAuthSecret)
-                                  , defaultUserID = Just (getSetting defaultUser)}
-                saveSettings emptyDefaultConfig (AutoFromAppName "test") conf                          
-                return $ Gr cfg man (requestAppCredentials req)
-
-                -- Load OauthToken and Secret from Config, if
-                -- if there is a token/secret in config, use it, otherwise go authorize
-
+           let secret = getSetting oAuthSecret
+           case secret of
+             "" -> do putStrLn "No OAuth token found" -- getnewsecrets?
+                      credentials <- grAuthenticate man req authMethod
+                      let tokenString = BSU.toString $ snd (head (unCredential credentials))
+                      let tokenSecretString = BSU.toString $ snd (head (tail (unCredential credentials)))
+                      let conf1 = setSetting conf oAuthToken tokenString
+                      let conf2 = setSetting conf1 oAuthSecret tokenSecretString
+                      saveSettings emptyDefaultConfig (AutoFromAppName "goodreads") conf2
+                      putStrLn "Saved new OAauth token and secret to config file"
+                      let cfg = GrConfig {loginCredentials = newCredential (pack $ getSetting oAuthToken) (pack $ secret)
+                              , defaultUserID = Just (getSetting defaultUser)}
+                      return $ Gr cfg man (requestAppCredentials req)
+             _ -> do
+                 let cfg = GrConfig {loginCredentials = newCredential (pack $ getSetting oAuthToken) (pack $ secret)
+                              , defaultUserID = Just (getSetting defaultUser)}
+                 saveSettings emptyDefaultConfig (AutoFromAppName "goodreads") conf                          
+                 putStrLn "Loaded config file" -- ++ (AutoFromAppName "test")
+                 return $ Gr cfg man (requestAppCredentials req)
+           -- Load OauthToken and Secret from Config, if
+           -- if there is a token/secret in config, use it, otherwise go authorize
        Left (x :: SomeException) -> do
-           credentials <- grAuthenticate man req authMethod
-           let defConf = GrConfig credentials Nothing
-           -- saveSettings emptyDefaultConfig (AutoFromAppName "test") conf                          
-           return $ Gr defConf man (requestAppCredentials req)
+           case x of
+             e :: ParseException -> throw e
+             _ -> do
+                 credentials <- grAuthenticate man req authMethod
+                 let defConf = GrConfig credentials Nothing
+                 putStrLn "No configuration file found, attempting to create a new file."
+                 -- saveSettings emptyDefaultConfig (AutoFromAppName "test") conf                          
+                 return $ Gr defConf man (requestAppCredentials req)
 
 -- error "Error reading the config file!"
 
 
+numReviews :: Document -> Int
 numReviews doc = lengthOf ?? doc $ root . el "GoodreadsResponse" ./ el "reviews" ./ el "review"
 
 
 -- tities :: Document -> [DI.Text]
+tities :: Document -> [Text]
 tities doc = doc ^.. root . el "GoodreadsResponse" ./ el "reviews" ./ el "review" ./ el "book" ./ el "title" . text
 
 parseGoodreadsFeed :: Document -> Either String [Book]
@@ -120,17 +137,16 @@ parseBook e = Book
   where t n = e ^? el "review" ./ el "book" ./ el n . text
 
 
-
 toHeaderName :: String -> HeaderName
 toHeaderName header = CI.mk (BytCh.pack header)
 
 respInfo :: Response L8.ByteString -> IO ()
 respInfo resp = print $ getResponseHeader (toHeaderName "content-type") resp
 
-signed :: Gr -> IO Request -> IO (Response L8.ByteString)
+--signed :: Gr -> IO Request -> IO (Response L8.ByteString)
+signed :: Gr -> Request -> IO (Response L8.ByteString)
 signed mgr resp = do
-    r <- resp
-    signed_req <- signWithConfig mgr r
+    signed_req <- signWithConfig mgr resp
     httpLbs signed_req (connectionManager mgr)
 
 requestParameters :: AuthRequest -> [(String, String)]
@@ -188,6 +204,7 @@ defaultAuthHandler url = do
 
 --- Begin Api Methods
 restAPI :: Control.Monad.Catch.MonadThrow m => Gr -> String -> [(ByteString, Maybe ByteString)] -> m Request
+-- restAPI :: Gr -> String -> [(ByteString, Maybe ByteString)] -> Request
 restAPI gr endpoint params = do
     -- Add API Key to params (if it is not in there FIXME?)
     let key = (BSU.toString (applicationKey (appCredentials gr)))
@@ -201,7 +218,7 @@ restAPI gr endpoint params = do
           $ req'
     return request
 
-getFindAuthorByName :: Control.Monad.Catch.MonadThrow m => Gr -> AuthorName -> m Request
+--getFindAuthorByName :: Control.Monad.Catch.MonadThrow m => Gr -> AuthorName -> m Request
 getFindAuthorByName conMan authorName = do
     restAPI conMan ("api/author_url/" ++ (urlEncode authorName)) []
     
@@ -210,7 +227,7 @@ getUserFollowers :: Control.Monad.Catch.MonadThrow m => Gr -> User -> m Request 
 getUserFollowers conMan user =
     restAPI conMan ("user/" ++ show (uid user) ++ "/followers.xml") []
 
-getBooksFromShelf :: Control.Monad.Catch.MonadThrow m => Gr -> User -> String -> m Request -- getUserFollowers :: Gr -> User -> Maybe Request
+--getBooksFromShelf :: Control.Monad.Catch.MonadThrow m => Gr -> User -> String -> m Request -- getUserFollowers :: Gr -> User -> Maybe Request
 getBooksFromShelf conMan user shelf = 
     restAPI conMan ("review/list/" ++ show (uid user) ++ ".xml") opts where 
       opts = [
@@ -240,26 +257,30 @@ defaultConfig = getDefaultConfig $ do
 doShowShelf :: AppOptions -> ShelfName -> UserID -> IO ()
 doShowShelf opts shelf uID = do
     gr <- doGr opts
-    r <-
-        signed gr $
-        getBooksFromShelf
-            gr
+    req <- getBooksFromShelf gr
             User
             { uid = uID
-            , name = Nothing
-            }
+            , name = Nothing  }
             shelf
-    let eBooks = respToBooks r
+
+    resp <-  signed gr req -- try
+    let eBooks = respToBooks resp
     case eBooks of
-        Right books -> for_ books $ \book -> print $ title book
+        Right books -> do for_ books $ \book -> printT $ title book
+                          print req --resp --- FIXME: CASE DEBUG?
+                          putStrLn ("OAuth Used: " ++ statusOauth) where
+                            statusOauth = case  (snd (head (unCredential (loginCredentials (config gr))))) of
+                              "" -> "NO"
+                              _  -> "YES/MAYBE"
         Left _ -> fail "failed in parsing." -- FIXME: undefined -- some error in parsing See Throw, control.exceptions
-  where
-    respToBooks = parseGoodreadsFeed . parseText_ def . decodeUtf8 . responseBody
+    where
+      respToBooks = parseGoodreadsFeed . parseText_ def . decodeUtf8 . responseBody
 
 doFindAuthor :: AppOptions -> AuthorName -> IO ()
 doFindAuthor opts authorName = do
     gr <- doGr opts
-    response <- signed gr $ getFindAuthorByName gr authorName
+    req <- getFindAuthorByName gr authorName
+    response <- signed gr req
     L8.putStrLn $ getResponseBody response
 
 doGr :: AppOptions -> IO Gr

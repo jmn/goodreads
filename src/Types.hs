@@ -3,8 +3,8 @@ import Data.Text (Text)
 import qualified Data.ByteString as BS
 import Network.HTTP.Client (Manager)
 import Web.Authenticate.OAuth
---       (oauthConsumerKey, oauthConsumerSecret, newOAuth, unCredential,
---        newCredential, signOAuth, Credential (Credential))
+       (oauthConsumerKey, oauthConsumerSecret, newOAuth, unCredential,
+        newCredential, signOAuth, Credential (Credential))
 
 data Options = Options AppOptions Command
 data Command

@@ -47,12 +47,12 @@ parseFindAuthor = FindAuthor
 
 parseShowFollowers :: Parser Command
 parseShowFollowers = ShowFollowers
-    <$> argument auto (metavar "GOODREADS_USER_ID") -- FIXME arguments to commands?
+    <$> argument auto (metavar "GOODREADS_USER_ID" <> value 0) -- FIXME arguments to commands?
 
 parseShowShelf :: Parser Command
 parseShowShelf = ShowShelf
     <$> argument str  (metavar "SHELFNAME")
-    <*> argument auto (metavar "GOODREADS_USER_ID")  -- if default-user-id is defined in config, use it as default.
+    <*> argument auto (metavar "GOODREADS_USER_ID" <> value 0)  -- if default-user-id is defined in config, use it as default.
 
 main :: IO ()
 main =
