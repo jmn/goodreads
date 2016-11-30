@@ -32,7 +32,7 @@ executable g
                      , containers
                      , bytestring
                      , case-insensitive
-                     , exceptions
+                     , safe-exceptions
                      , containers
                      , app-settings
                      , text-show
