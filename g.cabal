@@ -44,7 +44,6 @@ executable g
  other-modules:       Paths_g
                     , G
                     , Types
-                    , EagerPrint
 
  default-language:    Haskell2010
 

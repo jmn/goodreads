@@ -40,8 +40,13 @@ parseCommand = subparser $
     command "find"          (parseFindBook      `withInfo` "Find a book") <>
     command "findAuthor"    (parseFindAuthor    `withInfo` "Find an author") <>
     command "showFollowers" (parseShowFollowers `withInfo` "Show followers of user with id") <>
-    command "show"          (parseShowShelf     `withInfo` "Show a shelf, e.g. to-read")
+    command "show"          (parseShowShelf     `withInfo` "Show a shelf, e.g. to-read") <>
+    command "add"           (parseAddBook      `withInfo` "Add a book to a shelf.")
 
+parseAddBook :: Parser Command
+parseAddBook = AddBook
+    <$> argument str  (metavar "SHELFNAME")
+    <*> argument auto (metavar "BOOK_ID")  
 
 parseFindBook :: Parser Command
 parseFindBook = FindBook
@@ -68,9 +73,8 @@ main =
 run :: Options -> IO ()
 run (Options app cmd) =
     case cmd of
-        FindBook bookTitle      -> G.doFindBook app bookTitle
-        FindAuthor authorName   -> G.doFindAuthor app authorName
-        ShowFollowers uID       -> print uID
+        FindBook bookTitle -> G.doFindBook app bookTitle
+        FindAuthor authorName -> G.doFindAuthor app authorName
+        ShowFollowers uID -> print uID
         ShowShelf shelfName uID -> G.doShowShelf app shelfName uID
-
-
+        AddBook shelfName bookID -> G.doAddBook app shelfName bookID

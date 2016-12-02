@@ -12,10 +12,12 @@ data Command
      | ShowFollowers UserID
      | ShowShelf ShelfName UserID
      | FindBook BookTitle
-
+     | AddBook ShelfName BookID
+     
 type ShelfName = String
 type BookTitle = String
 type UserID = Int
+type BookID = Int
 
 data AppOptions = AppOptions
     { apiKey :: Maybe String

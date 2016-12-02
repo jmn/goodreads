@@ -5,7 +5,7 @@
 
 -- Goodreads API and Client as a single file
 -- TODO: Use Data.AppSettings instead of old Gr.Config
-module G (doShowShelf, doFindAuthor, doFindBook, getBooksFromShelf, getUserFollowers, getFindAuthorByName) where
+module G (doShowShelf, doFindAuthor, doFindBook, doAddBook, getBooksFromShelf, getUserFollowers, getFindAuthorByName) where
 import Types
 import XML
 import Auth
@@ -35,7 +35,7 @@ import Network.HTTP.Simple
        (Request, Response, parseRequest, getResponseHeader,
         setRequestQueryString, getResponseBody)
 import qualified Data.ByteString.Lazy.Char8 as L8
-import Network.HTTP.Client (newManager, responseBody, Manager, httpLbs)
+import Network.HTTP.Client (newManager, responseBody, Manager, httpLbs, method)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Text.XML (parseText_, def)
 import qualified Data.CaseInsensitive as CI
@@ -130,6 +130,20 @@ restAPI gr endpoint params = do
           $ req'
     return request
 
+-- | Add a book to a shelf
+-- https://www.goodreads.com/api/index#shelves.add_to_shelf
+putAddBook :: MonadThrow m => Gr -> ShelfName -> BookID -> m Request
+putAddBook conMan shelfName bookID = do
+    let i = restAPI conMan ("shelf/add_to_shelf.xml") opts where
+          opts = [(pack "name", Just $ pack shelfName)
+            , (pack "book_id", Just $ pack $ show bookID)] :: [(ByteString, Maybe ByteString)]
+    z <- i
+    let req = z
+            { method = "POST"
+            }
+    return req
+          
+
 getFindAuthorByName :: MonadThrow m => Gr -> AuthorName -> m Request
 getFindAuthorByName conMan authorName = do
     restAPI conMan ("api/author_url/" ++ (urlEncode authorName)) []
@@ -167,9 +181,6 @@ defaultConfig :: DefaultConfig
 defaultConfig = getDefaultConfig $ do
     setting defaultUser
 
---outPutWithHaskeline = runStateT (runInputT defaultSettings loop) ""
---outPutWithHaskeline
---outPutWithHaskeline :: IO ()
 out text = runInputT defaultSettings loop
    where 
        loop :: InputT IO ()
@@ -188,7 +199,7 @@ doFindBook opts findTitle = do
         Right books -> do
                           let bs = (zip [1..] books)
                           for_ bs $ \(i, book) -> do 
-                                                     let msg = sformat (int % ": " % text % "\n") i (fromStrict (title book))
+                                                     let msg = sformat (int % ": " % text % " [" % text % "]\n") i (fromStrict (title book)) (fromStrict $ fromMaybe "" (bookId book))
                                                      out msg
 
         Left _ -> do print req                 -- FIXME: Case debug
@@ -233,6 +244,13 @@ doFindAuthor :: AppOptions -> AuthorName -> IO ()
 doFindAuthor opts authorName = do
     gr <- doGr opts
     req <- getFindAuthorByName gr authorName
+    response <- signed gr req
+    L8.putStrLn $ getResponseBody response
+
+doAddBook :: AppOptions -> ShelfName -> BookID -> IO ()
+doAddBook opts shelfName bookID = do
+    gr <- doGr opts
+    req <- putAddBook gr shelfName bookID
     response <- signed gr req
     L8.putStrLn $ getResponseBody response
 
