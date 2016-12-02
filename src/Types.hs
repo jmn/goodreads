@@ -11,6 +11,11 @@ data Command
      = FindAuthor AuthorName 
      | ShowFollowers UserID
      | ShowShelf ShelfName UserID
+     | FindBook BookTitle
+
+type ShelfName = String
+type BookTitle = String
+type UserID = Int
 
 data AppOptions = AppOptions
     { apiKey :: Maybe String
@@ -54,8 +59,7 @@ instance Show AuthScope where
 
 data Book = Book {
     title :: Text
-  , pub_yr :: Text  -- FIXME: Use time/proper type
+  , bookId :: Maybe Text
+
     } deriving Show
 
-type ShelfName = String
-type UserID = Int

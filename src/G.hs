@@ -1,58 +1,54 @@
-{-# OPTIONS -Wall #-}
+{-# OPTIONS_GHC -Wall #-}
+{-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- Goodreads API and Client as a single file
 -- TODO: Use Data.AppSettings instead of old Gr.Config
-module G (doShowShelf, doFindAuthor, getBooksFromShelf, getUserFollowers, getFindAuthorByName) where
+module G (doShowShelf, doFindAuthor, doFindBook, getBooksFromShelf, getUserFollowers, getFindAuthorByName) where
 import Types
-import Data.Text (Text)
---import Data.Serialization
---import Control.Monad.Catch (MonadThrow)
+import XML
+import Auth
+--import Prelude hiding (print, putStrLn)
+--import IOUtil
+import System.Console.Haskeline
+--import Control.Monad.State.Strict
+--import Control.Monad.Trans (lift)
+--import EagerPrint
 import Control.Monad (guard)
-import qualified Data.ByteString as BS
 import Data.ByteString.Char8 (pack)
 import Data.ByteString.UTF8 (ByteString)
+import Data.Maybe (fromMaybe)
 import qualified Data.ByteString.UTF8 as BSU
-import Data.List
 import qualified Data.Map as Map
-import Data.Maybe (catMaybes)
-import Data.Monoid ((<>))
+import qualified Data.Text as T
 import Data.Text.Lazy.Encoding (decodeUtf8)
+import Data.Text.Lazy (fromStrict)
+import qualified Data.Text.IO as TIO (putStrLn)
+import Data.Monoid ((<>))
+--import Formatting (format)
+import Formatting
 import Network.HTTP (urlEncode)
 import Data.Foldable (for_)
-import Web.Authenticate.OAuth
-import Network.URL (exportParams)
--- import Network.HTTP.Client -- hiding (httpLbs)
 import Network.HTTP.Types.Header (HeaderName)
 import Network.HTTP.Simple
-       (Request, Response, parseRequest, getResponseHeader, setRequestQueryString,
-        getResponseBody)
-import Text.XML.Lens (Document, Element, (^?), (./), (^..), (??), root,  el, text, lengthOf)
+       (Request, Response, parseRequest, getResponseHeader,
+        setRequestQueryString, getResponseBody)
 import qualified Data.ByteString.Lazy.Char8 as L8
-import Network.HTTP.Client (newManager, responseBody, httpLbs) -- hiding (httpLbs)
+import Network.HTTP.Client (newManager, responseBody, Manager, httpLbs)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Text.XML (parseText_, def)
 import qualified Data.CaseInsensitive as CI
 import TextShow (printT)
 import qualified Data.ByteString.Char8 as BytCh
-import Network.HTTP.Client (Manager, Request, newManager, responseBody)
-import Web.Authenticate.OAuth
-       (oauthConsumerKey, oauthConsumerSecret, newOAuth, unCredential,
-        newCredential, signOAuth, Credential (Credential))
+import Web.Authenticate.OAuth (unCredential, newCredential)
 import System.Environment (getEnv)
-import Data.AppSettings (Setting(..), GetSetting(..),
-  FileLocation(Path), readSettings, DefaultConfig, FileLocation( AutoFromAppName), getDefaultConfig, setting, saveSettings, emptyDefaultConfig, setSetting, ParseException(..), Conf)
+import Data.AppSettings
+       (Setting(..), GetSetting(..), readSettings, DefaultConfig,
+        FileLocation(AutoFromAppName), getDefaultConfig, setting,
+        saveSettings, setSetting, Conf)
 import Control.Exception.Safe -- (IOException(..), catches, try, throw, Exception)
 import System.IO.Error (isDoesNotExistError)
-import qualified Data.Map as Map
-
---import Data.Typeable (Typeable)
-
-  -- | The configuration file is in an invalid format.
--- data ParseException = ParseException FilePath String
---     deriving (Show, Typeable)
--- instance Exception ParseException
 
 -- Begin Auth Stuff
 getKeysFromEnv :: IO AppCredentials
@@ -62,49 +58,17 @@ getKeysFromEnv = do
   return AppCredentials { applicationKey = pack grApiKey
                         , applicationSecret = pack grApiSecret}
 
-
--- Sign a request using config
-signWithConfig :: Gr -> Request -> IO Request
-signWithConfig gr request = do
-     let appCreds = appCredentials gr
-     let tokenString = snd (head (unCredential (loginCredentials (config gr))))
-     let tokenSecretString = snd (head (tail (unCredential (loginCredentials (config gr)))))
-     let mycred = newCredential tokenString tokenSecretString
-     let myoauth = newOAuth { oauthConsumerKey = applicationKey appCreds, oauthConsumerSecret = applicationSecret appCreds }
-     signOAuth myoauth mycred request
-
--- removeIfExists :: FilePath -> IO ()
--- removeIfExists fileName = removeFile fileName `catch` handleExists
---  where handleExists e
---          | isDoesNotExistError e = return ()
---          | otherwise = throwIO e
-
--- result :: IO (Maybe String)
--- result = foo <$> getString
-
--- foo :: String -> Maybe String
--- foo s | pred s    = Just (f s)
---       | otherwise = Nothing
-
--- r2 :: IO (Maybe (Conf, GetSetting))
--- r2 = foo2 <$> readSettings (AutoFromAppName "goodreads") `catch` handleExists
-
--- foo2 :: (Conf, GetSetting) -> (Maybe (Conf, GetSetting))
--- foo2 s
---   | pred s = Just s
---   | otherwise = Nothing
-
---handleExistsz :: (RealFloat a) => a -> a -> String
-handleExists e
-    | isDoesNotExistError e = return Nothing
-    | otherwise = throwIO e
-{- Problem:
-   Load Config file, if it does not exist, create it, if there's an IO error: throw it. -}
-
---loadConfig :: undefined -- IO (Maybe (Conf, GetSetting))
-
 lookupConfig :: IO (Maybe (Conf, GetSetting))
-lookupConfig = catchJust (guard . isDoesNotExistError) (Just <$> (readSettings (AutoFromAppName "goodreads"))) (\e -> return Nothing)
+lookupConfig = catchJust (guard . isDoesNotExistError) (Just <$> (readSettings (AutoFromAppName "goodreads"))) (\_ -> return Nothing)
+
+saveConfig :: GrConfig -> IO ()
+saveConfig cfg = do -- conf? as 2nd arg
+    let (tokenString, tokenSecretString) = credz (loginCredentials cfg)
+    let defaultUID = fromMaybe 0 (defaultUserID cfg)
+    let conf1 = setSetting Map.empty oAuthToken tokenString
+    let conf2 = setSetting conf1 oAuthSecret tokenSecretString
+    let conf3 = setSetting conf2 defaultUser defaultUID
+    saveSettings defaultConfig (AutoFromAppName "goodreads") conf3
 
 initGr :: Manager -> AuthRequest -> AuthHandler -> IO Gr
 initGr man req authMethod = do
@@ -115,58 +79,34 @@ initGr man req authMethod = do
                       case secret of
                           "" -> do putStrLn "No OAuth token found" -- getnewsecrets?
                                    credentials <- grAuthenticate man req authMethod
-                                   let tokenString = BSU.toString $ snd (head (unCredential credentials))
-                                   let tokenSecretString = BSU.toString $ snd (head (tail (unCredential credentials)))
-                                   let conf1 = setSetting conf oAuthToken tokenString
-                                   let conf2 = setSetting conf1 oAuthSecret tokenSecretString
-
-                                   saveSettings emptyDefaultConfig (AutoFromAppName "goodreads") conf2
+                                   let (tokenString, tokenSecretString) = credz credentials
+                                   
                                    putStrLn "Saved new OAauth token and secret to config file"
-                                   let cfg = GrConfig {loginCredentials = newCredential (pack $ getSetting oAuthToken) (pack $ secret)
+                                   let cfg = GrConfig {loginCredentials = newCredential (pack $ tokenString) (pack $ tokenSecretString)
                                                       , defaultUserID = Just (getSetting defaultUser)}
+                                   saveConfig cfg
                                    return $ Gr cfg man (requestAppCredentials req)
                           _ -> do
                                  let cfg = GrConfig {loginCredentials = newCredential (pack $ getSetting oAuthToken) (pack $ secret)
                                                    , defaultUserID = Just (getSetting defaultUser)}
-                                 saveSettings emptyDefaultConfig (AutoFromAppName "goodreads") conf
-                                 putStrLn "Loaded config file" -- ++ (AutoFromAppName "test")
+
+                                 saveSettings defaultConfig (AutoFromAppName "goodreads") conf
+                                 putStrLn "Loaded config file"
                                  return $ Gr cfg man (requestAppCredentials req)
+                                 
           Nothing -> do putStrLn "No config file found."
                         credentials <- grAuthenticate man req authMethod
-                        let tokenString = BSU.toString $ snd (head (unCredential credentials))
-                        let tokenSecretString = BSU.toString $ snd (head (tail (unCredential credentials)))
-                        let conf1 = setSetting Map.empty oAuthToken tokenString
-                        let conf2 = setSetting conf1 oAuthSecret tokenSecretString
-                        saveSettings emptyDefaultConfig (AutoFromAppName "goodreads") conf2
+                        let (tokenString, tokenSecretString) = credz credentials
+
                         putStrLn "Saved new OAauth token and secret to config file"
+
+                        -- FIXME: Ask for a default User ID
+                        -- "Would you like to add a default Goodreads user id? if so, type it and press enter."
+
                         let cfg = GrConfig {loginCredentials = newCredential (pack $ tokenString) (pack $ tokenSecretString)
                                            , defaultUserID = Nothing}
+                        saveConfig cfg
                         return $ Gr cfg man (requestAppCredentials req)
-
-numReviews :: Document -> Int
-numReviews doc = lengthOf ?? doc $ root . el "GoodreadsResponse" ./ el "reviews" ./ el "review"
-
--- tities :: Document -> [DI.Text]
-tities :: Document -> [Text]
-tities doc = doc ^.. root . el "GoodreadsResponse" ./ el "reviews" ./ el "review" ./ el "book" ./ el "title" . text
-
-parseGoodreadsFeed :: Document -> Either String [Book]
-parseGoodreadsFeed doc =
-  let bookElems = doc ^.. root . el "GoodreadsResponse" ./ el "reviews" ./ el "review"
-      books = catMaybes $ fmap parseBook bookElems
-
-  in if null bookElems
-      then Left $ "Unable to parse any items from " <> show doc
-      else if (length bookElems) /= (length books)
-           then Left $ "Unable to parse all items from " <> show bookElems
-           else Right books
-
-parseBook :: Element -> Maybe Book
-parseBook e = Book
-  <$> t "title"
-  <*> t "description" -- FIXME: Handle non existing fields
-
-  where t n = e ^? el "review" ./ el "book" ./ el n . text
 
 
 toHeaderName :: String -> HeaderName
@@ -175,68 +115,8 @@ toHeaderName header = CI.mk (BytCh.pack header)
 respInfo :: Response L8.ByteString -> IO ()
 respInfo resp = print $ getResponseHeader (toHeaderName "content-type") resp
 
---signed :: Gr -> IO Request -> IO (Response L8.ByteString)
-signed :: Gr -> Request -> IO (Response L8.ByteString)
-signed mgr resp = do
-    signed_req <- signWithConfig mgr resp
-    httpLbs signed_req (connectionManager mgr)
-
-requestParameters :: AuthRequest -> [(String, String)]
-requestParameters (AuthRequest name exp scopes _) =
-    [ ("name", name)
-    , ("expiration", expirationStr exp)
-    , ("scope", scopeStr scopes) ]
-  where expirationStr Nothing = "never"
-        expirationStr (Just d) | d == 1 = "1day"
-                               | otherwise = (show d) ++ "days"
-        scopeStr scopes = intercalate "," $ map show scopes
-
-oauthGr :: AppCredentials -> OAuth
-oauthGr (AppCredentials key secret) =
-    def { oauthConsumerKey    = key
-        , oauthConsumerSecret = secret
-        , oauthRequestUri     = "https://www.goodreads.com/oauth/request_token"
-        , oauthAuthorizeUri   = "https://www.goodreads.com/oauth/authorize"
-        , oauthAccessTokenUri = "https://www.goodreads.com/oauth/access_token"
-        , oauthServerName     = "https://www.goodreads.com/"
-        , oauthSignatureMethod = HMACSHA1} -- FIXME HTTPS
-
-grAuthorizeUrl :: AuthRequest -> OAuth -> Credential -> String
-grAuthorizeUrl req oauth cred =
-    concat [ baseUrl
-           , "&"
-           , exportParams $ reqParams]
-  where
-    baseUrl = authorizeUrl oauth cred
-    reqParams = requestParameters req
-
-grAuthenticate :: Manager -> AuthRequest -> AuthHandler -> IO Credential
-grAuthenticate man req handleAuth = do
-    cred <- getTemporaryCredential oauthSettings man
-
-    verifier <- handleAuth $  grAuthorizeUrl req oauthSettings cred
-
-    getAccessToken oauthSettings
-                   (injectVerifier verifier cred)
-                   man
-  where appCreds = requestAppCredentials $ req
-        oauthSettings = oauthGr appCreds
-
-defaultAuthHandler :: AuthHandler
-defaultAuthHandler url = do
-    putStrLn "You will need to authorize Gr to use your account."
-    putStrLn "Point your web browser to:"
-    putStrLn ""
-    putStrLn url
-    putStrLn ""
-    putStrLn "Paste the verification code you are given below and hit enter"
-    BS.getLine
-
---- End Auth methods
-
 --- Begin Api Methods
 restAPI :: MonadThrow m => Gr -> String -> [(ByteString, Maybe ByteString)] -> m Request
--- restAPI :: Gr -> String -> [(ByteString, Maybe ByteString)] -> Request
 restAPI gr endpoint params = do
     -- Add API Key to params (if it is not in there FIXME?)
     let key = (BSU.toString (applicationKey (appCredentials gr)))
@@ -250,16 +130,22 @@ restAPI gr endpoint params = do
           $ req'
     return request
 
---getFindAuthorByName :: Control.Monad.Catch.MonadThrow m => Gr -> AuthorName -> m Request
+getFindAuthorByName :: MonadThrow m => Gr -> AuthorName -> m Request
 getFindAuthorByName conMan authorName = do
     restAPI conMan ("api/author_url/" ++ (urlEncode authorName)) []
 
 
-getUserFollowers :: MonadThrow m => Gr -> User -> m Request -- getUserFollowers :: Gr -> User -> Maybe Request
+getUserFollowers :: MonadThrow m => Gr -> User -> m Request 
 getUserFollowers conMan user =
     restAPI conMan ("user/" ++ show (uid user) ++ "/followers.xml") []
 
---getBooksFromShelf :: Control.Monad.Catch.MonadThrow m => Gr -> User -> String -> m Request -- getUserFollowers :: Gr -> User -> Maybe Request
+getFindBooks :: MonadThrow m => Gr -> String -> m Request
+getFindBooks conMan title =
+    restAPI conMan ("search/index.xml") opts where
+        opts = [
+            (pack "q", Just $ pack title)] :: [(ByteString, Maybe ByteString)]
+                                           
+getBooksFromShelf :: MonadThrow m => Gr -> User -> String -> m Request
 getBooksFromShelf conMan user shelf =
     restAPI conMan ("review/list/" ++ show (uid user) ++ ".xml") opts where
       opts = [
@@ -267,14 +153,10 @@ getBooksFromShelf conMan user shelf =
           , (pack "shelf",  Just $ pack shelf)
           ]  :: [(ByteString, Maybe ByteString)]
 
-
-
--- defaultUser :: Maybe Int -- TODO fetch from config file
--- defaultUser = Just
-
+-- Settings
 defaultUser :: Setting Int
 defaultUser = Setting "defaultUser" 35682014
--- c :: Setting Credential
+
 oAuthToken :: Setting String
 oAuthToken = Setting "oAuthSecret" ""
 
@@ -285,14 +167,49 @@ defaultConfig :: DefaultConfig
 defaultConfig = getDefaultConfig $ do
     setting defaultUser
 
+--outPutWithHaskeline = runStateT (runInputT defaultSettings loop) ""
+--outPutWithHaskeline
+--outPutWithHaskeline :: IO ()
+out text = runInputT defaultSettings loop
+   where 
+       loop :: InputT IO ()
+       loop = do
+           outputStr $ T.unpack text
+           return ()
 
+doFindBook :: AppOptions -> String -> IO ()
+doFindBook opts findTitle = do
+    gr <- doGr opts
+    req <- getFindBooks gr findTitle
+    resp <- httpLbs req (connectionManager gr)
+
+    let eBooks = respToBooks resp
+    case eBooks of
+        Right books -> do
+                          let bs = (zip [1..] books)
+                          for_ bs $ \(i, book) -> do 
+                                                     let msg = sformat (int % ": " % text % "\n") i (fromStrict (title book))
+                                                     out msg
+
+        Left _ -> do print req                 -- FIXME: Case debug
+                     fail "failed in parsing." -- FIXME: undefined -- some error in parsing See Throw, control.exceptions
+
+    where
+      respToBooks = parseBookSearch . parseText_ def . decodeUtf8 . responseBody
+    
+    
 doShowShelf :: AppOptions -> ShelfName -> UserID -> IO ()
-doShowShelf opts shelf 0 = putStrLn "Please provide a valid User ID."
+--doShowShelf _ _ 0 = putStrLn "Please provide a valid User ID."
 doShowShelf opts shelf uID = do
     gr <- doGr opts
+    let user_id = case uID of
+          0 -> case defaultUserID (config gr) of
+                 Just u -> u
+                 Nothing -> uID -- try the default user
+          _ -> uID
     req <- getBooksFromShelf gr
             User
-            { uid = uID
+            { uid = user_id -- fixme: this shouldn't ever be called with 0
             , name = Nothing  }
             shelf
 
@@ -305,6 +222,7 @@ doShowShelf opts shelf uID = do
                             statusOauth = case  (snd (head (unCredential (loginCredentials (config gr))))) of
                               "" -> "NO"
                               _  -> "YES/MAYBE"
+
         Left _ -> do print req -- FIXME: Case debug
                      fail "failed in parsing." -- FIXME: undefined -- some error in parsing See Throw, control.exceptions
 
@@ -330,7 +248,7 @@ doGr app = do
                     }
             Nothing -> getKeysFromEnv -- FIXME Get from config file?
     case keys of
-       Left (x :: SomeException) -> error "Error Loading API Keys: Set GOODREADS_API_KEY, GOODREADS_API_SECRET"
+       Left (_ :: SomeException) -> error "Error Loading API Keys: Set GOODREADS_API_KEY, GOODREADS_API_SECRET"
        Right k -> do
            let authReq =
                  AuthRequest

@@ -36,10 +36,16 @@ executable g
                      , containers
                      , app-settings
                      , text-show
+                     , lens
+                     , double-conversion
+                     , formatting
+                     , haskeline
 
  other-modules:       Paths_g
                     , G
                     , Types
+                    , EagerPrint
+
  default-language:    Haskell2010
 
 test-suite g-test
