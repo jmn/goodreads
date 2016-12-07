@@ -61,14 +61,16 @@ getKeysFromEnv = do
 lookupConfig :: IO (Maybe (Conf, GetSetting))
 lookupConfig = catchJust (guard . isDoesNotExistError) (Just <$> (readSettings (AutoFromAppName "goodreads"))) (\_ -> return Nothing)
 
-saveConfig :: GrConfig -> IO ()
-saveConfig cfg = do -- conf? as 2nd arg
+saveConfig :: GrConfig -> AppCredentials -> IO ()
+saveConfig cfg appCr = do -- conf? as 2nd arg
     let (tokenString, tokenSecretString) = credz (loginCredentials cfg)
     let defaultUID = fromMaybe 0 (defaultUserID cfg)
     let conf1 = setSetting Map.empty oAuthToken tokenString
     let conf2 = setSetting conf1 oAuthSecret tokenSecretString
     let conf3 = setSetting conf2 defaultUser defaultUID
-    saveSettings defaultConfig (AutoFromAppName "goodreads") conf3
+    let conf4 = setSetting conf3 setApiKey "" -- appCredentials
+    let conf5 = setSetting conf4 setApiSecret ""
+    saveSettings defaultConfig (AutoFromAppName "goodreads") conf5
 
 initGr :: Manager -> AuthRequest -> AuthHandler -> IO Gr
 initGr man req authMethod = do
@@ -84,8 +86,10 @@ initGr man req authMethod = do
                                    putStrLn "Saved new OAauth token and secret to config file"
                                    let cfg = GrConfig {loginCredentials = newCredential (pack $ tokenString) (pack $ tokenSecretString)
                                                       , defaultUserID = Just (getSetting defaultUser)}
-                                   saveConfig cfg
-                                   return $ Gr cfg man (requestAppCredentials req)
+
+                                   let credentials = (requestAppCredentials req)
+                                   saveConfig cfg credentials
+                                   return $ Gr cfg man credentials
                           _ -> do
                                  let cfg = GrConfig {loginCredentials = newCredential (pack $ getSetting oAuthToken) (pack $ secret)
                                                    , defaultUserID = Just (getSetting defaultUser)}
@@ -105,8 +109,9 @@ initGr man req authMethod = do
 
                         let cfg = GrConfig {loginCredentials = newCredential (pack $ tokenString) (pack $ tokenSecretString)
                                            , defaultUserID = Nothing}
-                        saveConfig cfg
-                        return $ Gr cfg man (requestAppCredentials req)
+                        let appCreds = (requestAppCredentials req)
+                        saveConfig cfg appCreds
+                        return $ Gr cfg man appCreds
 
 
 toHeaderName :: String -> HeaderName
@@ -176,6 +181,12 @@ oAuthToken = Setting "oAuthSecret" ""
 
 oAuthSecret :: Setting String
 oAuthSecret = Setting "oAuthToken" ""
+
+setApiKey :: Setting String
+setApiKey = Setting "apiKey" ""
+
+setApiSecret :: Setting String
+setApiSecret = Setting "apiSecret" ""
 
 defaultConfig :: DefaultConfig
 defaultConfig = getDefaultConfig $ do
@@ -264,7 +275,19 @@ doGr app = do
                     { applicationKey = pack k
                     , applicationSecret = pack "NOT IMPLEMENTED"
                     }
-            Nothing -> getKeysFromEnv -- FIXME Get from config file?
+            Nothing -> do
+                        x <- lookupConfig
+                        case x of
+                          Just (conf, GetSetting getSetting) -> do
+                              let apiKey = getSetting setApiKey
+                              let apiSecret = getSetting setApiSecret
+                              case (any null [apiKey,apiSecret]) of
+                                False -> return AppCredentials { applicationKey = pack apiKey
+                                                           , applicationSecret = pack apiSecret}
+
+                                True -> getKeysFromEnv -- not found in args, nor in config file.
+                          Nothing -> getKeysFromEnv
+
     case keys of
        Left (_ :: SomeException) -> error "Error Loading API Keys: Set GOODREADS_API_KEY, GOODREADS_API_SECRET"
        Right k -> do
