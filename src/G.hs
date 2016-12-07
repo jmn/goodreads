@@ -218,8 +218,14 @@ doFindBook opts findTitle = do
 
     where
       respToBooks = parseBookSearch . parseText_ def . decodeUtf8 . responseBody
-    
-    
+
+printListOfBooks :: [Book] -> IO ()
+printListOfBooks books = do
+    let booksEnumerated = (zip [1..] books)
+    for_ booksEnumerated $ \(i, book) -> do 
+        let msg = sformat (int % ": " % text % " [" % text % "]\n") i (fromStrict (title book)) (fromStrict $ fromMaybe "" (bookId book))
+        out msg
+
 doShowShelf :: AppOptions -> ShelfName -> UserID -> IO ()
 --doShowShelf _ _ 0 = putStrLn "Please provide a valid User ID."
 doShowShelf opts shelf uID = do
@@ -238,8 +244,8 @@ doShowShelf opts shelf uID = do
     resp <-  signed gr req -- try
     let eBooks = respToBooks resp
     case eBooks of
-        Right books -> do for_ books $ \book -> printT $ title book
-                          print req --resp --- FIXME: CASE DEBUG?
+        Right books -> do printListOfBooks books -- for_ books $ \book -> printT $ title book
+--                          print req --resp --- FIXME: CASE DEBUG?
                           putStrLn ("OAuth Used: " ++ statusOauth) where
                             statusOauth = case  (snd (head (unCredential (loginCredentials (config gr))))) of
                               "" -> "NO"
