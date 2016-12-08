@@ -47,7 +47,7 @@ import Data.AppSettings
         saveSettings, setSetting, Conf)
 import Control.Exception.Safe -- (IOException(..), catches, try, throw, Exception)
 import System.IO.Error (isDoesNotExistError)
-
+import qualified Text.Pandoc as Pandoc
 -- Begin Auth Stuff
 getKeysFromEnv :: IO AppCredentials
 getKeysFromEnv = do
@@ -288,7 +288,11 @@ doShowBook opts eBookQ = do
 
     L8.putStrLn $ getResponseBody response
     case bookInfo of
-      Just t -> out t
+      Just t -> do
+          let pd = Pandoc.readHtml Pandoc.def (T.unpack t)
+          case pd of
+            Left e -> fail "foo" --e
+            Right doc -> out $ T.pack (Pandoc.writeMarkdown Pandoc.def doc)
       _ -> fail "failed"
 
 --    L8.putStrLn $ getResponseBody response
