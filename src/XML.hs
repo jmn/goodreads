@@ -17,6 +17,16 @@ numReviews doc = lengthOf ?? doc $ root . el "GoodreadsResponse" ./ el "reviews"
 tities :: Document -> [Text]
 tities doc = doc ^.. root . el "GoodreadsResponse" ./ el "reviews" ./ el "review" ./ el "book" ./ el "title" . text
 -----------------------------
+parseBookInfo :: Document -> Maybe Text --Either String String
+parseBookInfo doc =
+--    let book = doc ^? root . el "Goodreadsresponse" ./ el "book"
+    doc ^? root . el "GoodreadsResponse" ./ el "book"   ./ el "description" . text
+--    let book = doc ^.. root . el "GoodreadsResponse" ./ el "book"
+--        title = book ^? root .el "book" ./ el "title" . text
+--        descr = book ./ el "book" ./ el "description" . text
+--    in if null title
+--      then Left $ "Unable to find book"
+--      else Right title
 
 parseBookSearch :: Document -> Either String [Book]
 parseBookSearch doc =

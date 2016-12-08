@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fno-warn-type-defaults #-}
 {-# OPTIONS_GHC -Wall #-}
 {-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -5,7 +6,7 @@
 
 -- Goodreads API and Client as a single file
 -- TODO: Use Data.AppSettings instead of old Gr.Config
-module G (doShowShelf, doFindAuthor, doFindBook, doAddBook, getBooksFromShelf, getUserFollowers, getFindAuthorByName) where
+module G (doShowShelf, doFindAuthor, doFindBook, doAddBook, doShowBook, getBooksFromShelf, getUserFollowers, getFindAuthorByName, getShowBook) where
 import Types
 import XML
 import Auth
@@ -24,8 +25,6 @@ import qualified Data.Map as Map
 import qualified Data.Text as T
 import Data.Text.Lazy.Encoding (decodeUtf8)
 import Data.Text.Lazy (fromStrict)
-import qualified Data.Text.IO as TIO (putStrLn)
-import Data.Monoid ((<>))
 --import Formatting (format)
 import Formatting
 import Network.HTTP (urlEncode)
@@ -39,7 +38,6 @@ import Network.HTTP.Client (newManager, responseBody, Manager, httpLbs, method)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Text.XML (parseText_, def)
 import qualified Data.CaseInsensitive as CI
-import TextShow (printT)
 import qualified Data.ByteString.Char8 as BytCh
 import Web.Authenticate.OAuth (unCredential, newCredential)
 import System.Environment (getEnv)
@@ -149,6 +147,16 @@ putAddBook conMan shelfName bookID = do
     return req
           
 
+getShowBook :: MonadThrow m => Gr -> BookID -> m Request
+getShowBook conMan eBookQ = do
+    -- let (uri, opts) = case eBookQ of
+    --       Left bID -> ("book/show/" ++ show bID ++ ".xml", [])
+    --       Right bName -> ("book/title.xml", o) where
+    --                        o = [(pack "title", Just $ pack bName)] :: [(ByteString, Maybe ByteString)]
+
+    let (uri, opts) = ("book/show/" ++ show eBookQ ++ ".xml", [])      
+    restAPI conMan uri opts
+    
 getFindAuthorByName :: MonadThrow m => Gr -> AuthorName -> m Request
 getFindAuthorByName conMan authorName = do
     restAPI conMan ("api/author_url/" ++ (urlEncode authorName)) []
@@ -192,11 +200,12 @@ defaultConfig :: DefaultConfig
 defaultConfig = getDefaultConfig $ do
     setting defaultUser
 
-out text = runInputT defaultSettings loop
+out :: T.Text -> IO ()
+out txt = runInputT defaultSettings loop
    where 
        loop :: InputT IO ()
        loop = do
-           outputStr $ T.unpack text
+           outputStr $ T.unpack txt
            return ()
 
 doFindBook :: AppOptions -> String -> IO ()
@@ -207,12 +216,7 @@ doFindBook opts findTitle = do
 
     let eBooks = respToBooks resp
     case eBooks of
-        Right books -> do
-                          let bs = (zip [1..] books)
-                          for_ bs $ \(i, book) -> do 
-                                                     let msg = sformat (int % ": " % text % " [" % text % "]\n") i (fromStrict (title book)) (fromStrict $ fromMaybe "" (bookId book))
-                                                     out msg
-
+        Right books -> printListOfBooks books
         Left _ -> do print req                 -- FIXME: Case debug
                      fail "failed in parsing." -- FIXME: undefined -- some error in parsing See Throw, control.exceptions
 
@@ -270,6 +274,24 @@ doAddBook opts shelfName bookID = do
     req <- putAddBook gr shelfName bookID
     response <- signed gr req
     L8.putStrLn $ getResponseBody response
+
+
+--doShowBook :: AppOptions -> (Either BookID BookTitle) -> IO ()
+doShowBook :: AppOptions -> BookID -> IO ()
+doShowBook opts eBookQ = do
+    gr <- doGr opts
+    req <- getShowBook gr eBookQ
+    response <- signed gr req
+    let bookInf = parseBookInfo . parseText_ def . decodeUtf8 . responseBody
+
+    let bookInfo = bookInf response
+
+    L8.putStrLn $ getResponseBody response
+    case bookInfo of
+      Just t -> out t
+      _ -> fail "failed"
+
+--    L8.putStrLn $ getResponseBody response
 
 doGr :: AppOptions -> IO Gr
 doGr app = do

@@ -13,6 +13,7 @@ data Command
      | ShowShelf ShelfName UserID
      | FindBook BookTitle
      | AddBook ShelfName BookID
+     | ShowBook BookID --(Either BookID BookTitle)
      
 type ShelfName = String
 type BookTitle = String
