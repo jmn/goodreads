@@ -2,8 +2,9 @@
 module Main where
 import qualified G
 import Options.Applicative
+import Data.Semigroup ((<>))
 import Types
-import qualified Paths_g as Meta (version)
+import qualified Paths_gr as Meta (version)
 import Data.Version (showVersion)
 import qualified Data.ByteString.Lazy.Char8 as L8
 import Control.Exception (SomeException, try)
