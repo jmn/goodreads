@@ -41,7 +41,7 @@ executable gr
                      , haskeline
                      , pandoc
 
- other-modules:       Paths_g
+ other-modules:       Paths_gr
                     , G
                     , Types
                     , XML
