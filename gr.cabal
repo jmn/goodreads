@@ -46,6 +46,8 @@ executable gr
                     , Types
                     , XML
                     , Auth
+                    , Settings
+                    , NetImports
 
  default-language:    Haskell2010
 

@@ -4,20 +4,22 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
--- Goodreads API and Client as a single file
--- TODO: Use Data.AppSettings instead of old Gr.Config
-module GRApi (doShowShelf, doFindAuthor, doFindBook, doAddBook, doShowBook, getBooksFromShelf, getUserFollowers, getFindAuthorByName, getShowBook) where
+module GRApi  where
+
 import Types
 import XML
 import Auth (signRequest, grAuthenticate, credz, defaultAuthHandler)
+import Settings
+import Web.Authenticate.OAuth
+       (oauthConsumerKey, oauthConsumerSecret, newOAuth, unCredential,
+        newCredential, signOAuth, Credential (Credential))
+import NetImports
+
 
 import System.Console.Haskeline
-import Control.Monad (guard)
 import Data.ByteString.Char8 (pack)
 import Data.ByteString.UTF8 (ByteString)
-import Data.Maybe (fromMaybe)
-import qualified Data.ByteString.UTF8 as BSU
-import qualified Data.Map as Map
+import qualified Text.Pandoc as Pandoc
 import qualified Data.Text as T
 import Data.Text.Lazy.Encoding (decodeUtf8)
 import Data.Text.Lazy (fromStrict)
@@ -29,17 +31,32 @@ import Network.HTTP.Simple
         setRequestQueryString, getResponseBody)
 import qualified Data.ByteString.Lazy.Char8 as L8
 import Network.HTTP.Client (newManager, responseBody, Manager, httpLbs, method)
-import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Text.XML (parseText_, def)
 import Web.Authenticate.OAuth (unCredential, newCredential)
-import System.Environment (getEnv)
 import Data.AppSettings
        (Setting(..), GetSetting(..), readSettings, DefaultConfig,
         FileLocation(AutoFromAppName), getDefaultConfig, setting,
         saveSettings, setSetting, Conf)
+
+import Network.HTTP.Client (newManager, responseBody, Manager, httpLbs, method)
+import System.Environment (getEnv)
+import System.Console.Haskeline
+import Control.Monad (guard)
+import Data.ByteString.Char8 (pack)
+import Data.ByteString.UTF8 (ByteString)
+import Data.Maybe (fromMaybe)
+import qualified Data.ByteString.UTF8 as BSU
+import qualified Data.Map as Map
+import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Control.Exception.Safe -- (IOException(..), catches, try, throw, Exception)
 import System.IO.Error (isDoesNotExistError)
-import qualified Text.Pandoc as Pandoc
+import Data.AppSettings
+       (Setting(..), GetSetting(..), readSettings, DefaultConfig,
+        FileLocation(AutoFromAppName), getDefaultConfig, setting,
+        saveSettings, setSetting, Conf)
+import Network.HTTP.Simple
+       (Request, parseRequest,
+        setRequestQueryString, getResponseBody)
 
 -- | Auth Stuff: API Key and API Secret, get from system environment.
 getKeysFromEnv :: IO AppCredentials
@@ -99,14 +116,6 @@ initGr man req authMethod = do
                         saveConfig cfg appCreds
                         return $ Gr cfg man appCreds
 
-
-
---toHeaderName :: String -> HeaderName
---toHeaderName header = CI.mk (BytCh.pack header)
-
---respInfo :: Response L8.ByteString -> IO ()
---respInfo resp = print $ getResponseHeader (toHeaderName "content-type") resp
-
 -- | Begin Api Methods
 restAPI :: MonadThrow m => Gr -> String -> [(ByteString, Maybe ByteString)] -> m Request
 restAPI gr endpoint params = do
@@ -122,8 +131,43 @@ restAPI gr endpoint params = do
           $ req'
     return request
 
--- | Add a book to a shelf
--- https://www.goodreads.com/api/index#shelves.add_to_shelf
+
+doGr :: AppOptions -> IO Gr
+doGr app = do
+    keys <- try $
+        case apiKey app of
+            Just k -> -- Key was provided as argument
+                return
+                    AppCredentials
+                    { applicationKey = pack k
+                    , applicationSecret = pack "NOT IMPLEMENTED"
+                    }
+            Nothing -> do
+                        x <- lookupConfig
+                        case x of
+                          Just (_, GetSetting getSetting) -> do
+                              let api_Key = getSetting setApiKey
+                              let apiSecret = getSetting setApiSecret
+                              case (any null [api_Key,apiSecret]) of
+                                False -> return AppCredentials { applicationKey = pack api_Key
+                                                           , applicationSecret = pack apiSecret}
+
+                                True -> getKeysFromEnv -- not found in args, nor in config file.
+                          Nothing -> getKeysFromEnv
+
+    case keys of
+       Left (_ :: SomeException) -> error "Error Loading API Keys: Set GOODREADS_API_KEY, GOODREADS_API_SECRET"
+       Right k -> do
+           let authReq =
+                 AuthRequest
+                 { applicationName = "Gr"
+                 , expiration = Nothing
+                 , scope = [Read, Write]
+                 , requestAppCredentials = k
+                 }
+           manager <- newManager tlsManagerSettings
+           initGr manager authReq defaultAuthHandler
+
 putAddBook :: MonadThrow m => Gr -> ShelfName -> BookID -> m Request
 putAddBook conMan shelfName bookID = do
     let i = restAPI conMan ("shelf/add_to_shelf.xml") opts where
@@ -163,25 +207,6 @@ getBooksFromShelf conMan user shelf =
           , (pack "shelf",  Just $ pack shelf)
           ]  :: [(ByteString, Maybe ByteString)]
 
--- Settings
-defaultUser :: Setting Int
-defaultUser = Setting "defaultUser" 35682014
-
-oAuthToken :: Setting String
-oAuthToken = Setting "oAuthSecret" ""
-
-oAuthSecret :: Setting String
-oAuthSecret = Setting "oAuthToken" ""
-
-setApiKey :: Setting String
-setApiKey = Setting "apiKey" ""
-
-setApiSecret :: Setting String
-setApiSecret = Setting "apiSecret" ""
-
-defaultConfig :: DefaultConfig
-defaultConfig = getDefaultConfig $ do
-    setting defaultUser
 
 out :: T.Text -> IO ()
 out txt = runInputT defaultSettings loop
@@ -275,39 +300,3 @@ doShowBook opts eBookQ = do
             Left _ -> fail "foo" --e
             Right doc -> out $ T.pack (Pandoc.writeMarkdown Pandoc.def doc)
       _ -> fail "failed"
-
-doGr :: AppOptions -> IO Gr
-doGr app = do
-    keys <- try $
-        case apiKey app of
-            Just k -> -- Key was provided as argument
-                return
-                    AppCredentials
-                    { applicationKey = pack k
-                    , applicationSecret = pack "NOT IMPLEMENTED"
-                    }
-            Nothing -> do
-                        x <- lookupConfig
-                        case x of
-                          Just (_, GetSetting getSetting) -> do
-                              let api_Key = getSetting setApiKey
-                              let apiSecret = getSetting setApiSecret
-                              case (any null [api_Key,apiSecret]) of
-                                False -> return AppCredentials { applicationKey = pack api_Key
-                                                           , applicationSecret = pack apiSecret}
-
-                                True -> getKeysFromEnv -- not found in args, nor in config file.
-                          Nothing -> getKeysFromEnv
-
-    case keys of
-       Left (_ :: SomeException) -> error "Error Loading API Keys: Set GOODREADS_API_KEY, GOODREADS_API_SECRET"
-       Right k -> do
-           let authReq =
-                 AuthRequest
-                 { applicationName = "Gr"
-                 , expiration = Nothing
-                 , scope = [Read, Write]
-                 , requestAppCredentials = k
-                 }
-           manager <- newManager tlsManagerSettings
-           initGr manager authReq defaultAuthHandler
