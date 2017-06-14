@@ -209,8 +209,9 @@ doFindBook opts findTitle = do
 printListOfBooks :: [Book] -> IO ()
 printListOfBooks books = do
     let booksEnumerated = (zip [1::Integer ..] books)
-    for_ booksEnumerated $ \(i, book) -> do 
-        let msg = sformat (int % ": " % text % " [" % text % "]\n") i (fromStrict (title book)) (fromStrict $ fromMaybe "" (bookId book))
+    for_ booksEnumerated $ \(i, book) -> do
+        let formatEnum = (int % ": " % text % " [" % text % "]\n")
+        let msg = sformat formatEnum i (fromStrict (title book)) (fromStrict $ fromMaybe "" (bookId book))
         out msg
         
 doShowShelf :: AppOptions -> ShelfName -> UserID -> IO ()
