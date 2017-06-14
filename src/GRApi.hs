@@ -43,7 +43,8 @@ import Data.AppSettings
 import Control.Exception.Safe -- (IOException(..), catches, try, throw, Exception)
 import System.IO.Error (isDoesNotExistError)
 import qualified Text.Pandoc as Pandoc
--- Begin Auth Stuff
+
+--| Auth Stuff: API Key and API Secret, get from system environment.
 getKeysFromEnv :: IO AppCredentials
 getKeysFromEnv = do
   grApiKey    <- getEnv "GOODREADS_API_KEY"
@@ -94,17 +95,13 @@ initGr man req authMethod = do
           Nothing -> do putStrLn "No config file found."
                         credentials <- grAuthenticate man req authMethod
                         let (tokenString, tokenSecretString) = credz credentials
-
                         putStrLn "Saved new OAauth token and secret to config file"
-
-                        -- FIXME: Ask for a default User ID
-                        -- "Would you like to add a default Goodreads user id? if so, type it and press enter."
-
                         let cfg = GrConfig {loginCredentials = newCredential (pack $ tokenString) (pack $ tokenSecretString)
                                            , defaultUserID = Nothing}
                         let appCreds = (requestAppCredentials req)
                         saveConfig cfg appCreds
                         return $ Gr cfg man appCreds
+
 
 
 toHeaderName :: String -> HeaderName
@@ -113,7 +110,7 @@ toHeaderName header = CI.mk (BytCh.pack header)
 respInfo :: Response L8.ByteString -> IO ()
 respInfo resp = print $ getResponseHeader (toHeaderName "content-type") resp
 
---- Begin Api Methods
+--| Begin Api Methods
 restAPI :: MonadThrow m => Gr -> String -> [(ByteString, Maybe ByteString)] -> m Request
 restAPI gr endpoint params = do
     -- Add API Key to params (if it is not in there FIXME?)
@@ -144,18 +141,12 @@ putAddBook conMan shelfName bookID = do
 
 getShowBook :: MonadThrow m => Gr -> BookID -> m Request
 getShowBook conMan eBookQ = do
-    -- let (uri, opts) = case eBookQ of
-    --       Left bID -> ("book/show/" ++ show bID ++ ".xml", [])
-    --       Right bName -> ("book/title.xml", o) where
-    --                        o = [(pack "title", Just $ pack bName)] :: [(ByteString, Maybe ByteString)]
-
     let (uri, opts) = ("book/show/" ++ show eBookQ ++ ".xml", [])      
     restAPI conMan uri opts
     
 getFindAuthorByName :: MonadThrow m => Gr -> AuthorName -> m Request
 getFindAuthorByName conMan authorName = do
     restAPI conMan ("api/author_url/" ++ (urlEncode authorName)) []
-
 
 getUserFollowers :: MonadThrow m => Gr -> User -> m Request 
 getUserFollowers conMan user =
@@ -226,7 +217,6 @@ printListOfBooks books = do
         out msg
 
 doShowShelf :: AppOptions -> ShelfName -> UserID -> IO ()
---doShowShelf _ _ 0 = putStrLn "Please provide a valid User ID."
 doShowShelf opts shelf uID = do
     gr <- doGr opts
     let user_id = case uID of
@@ -244,7 +234,6 @@ doShowShelf opts shelf uID = do
     let eBooks = respToBooks resp
     case eBooks of
         Right books -> do printListOfBooks books -- for_ books $ \book -> printT $ title book
---                          print req --resp --- FIXME: CASE DEBUG?
                           putStrLn ("OAuth Used: " ++ statusOauth) where
                             statusOauth = case  (snd (head (unCredential (loginCredentials (config gr))))) of
                               "" -> "NO"
@@ -271,7 +260,6 @@ doAddBook opts shelfName bookID = do
     L8.putStrLn $ getResponseBody response
 
 
---doShowBook :: AppOptions -> (Either BookID BookTitle) -> IO ()
 doShowBook :: AppOptions -> BookID -> IO ()
 doShowBook opts eBookQ = do
     gr <- doGr opts
@@ -289,8 +277,6 @@ doShowBook opts eBookQ = do
             Left e -> fail "foo" --e
             Right doc -> out $ T.pack (Pandoc.writeMarkdown Pandoc.def doc)
       _ -> fail "failed"
-
---    L8.putStrLn $ getResponseBody response
 
 doGr :: AppOptions -> IO Gr
 doGr app = do
