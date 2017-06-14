@@ -6,16 +6,11 @@
 
 -- Goodreads API and Client as a single file
 -- TODO: Use Data.AppSettings instead of old Gr.Config
-module G (doShowShelf, doFindAuthor, doFindBook, doAddBook, doShowBook, getBooksFromShelf, getUserFollowers, getFindAuthorByName, getShowBook) where
+module GRApi (doShowShelf, doFindAuthor, doFindBook, doAddBook, doShowBook, getBooksFromShelf, getUserFollowers, getFindAuthorByName, getShowBook) where
 import Types
 import XML
 import Auth
---import Prelude hiding (print, putStrLn)
---import IOUtil
 import System.Console.Haskeline
---import Control.Monad.State.Strict
---import Control.Monad.Trans (lift)
---import EagerPrint
 import Control.Monad (guard)
 import Data.ByteString.Char8 (pack)
 import Data.ByteString.UTF8 (ByteString)
@@ -25,7 +20,7 @@ import qualified Data.Map as Map
 import qualified Data.Text as T
 import Data.Text.Lazy.Encoding (decodeUtf8)
 import Data.Text.Lazy (fromStrict)
---import Formatting (format)
+
 import Formatting
 import Network.HTTP (urlEncode)
 import Data.Foldable (for_)
