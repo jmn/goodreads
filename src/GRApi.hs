@@ -10,6 +10,7 @@ module GRApi (doShowShelf, doFindAuthor, doFindBook, doAddBook, doShowBook, getB
 import Types
 import XML
 import Auth
+
 import System.Console.Haskeline
 import Control.Monad (guard)
 import Data.ByteString.Char8 (pack)
@@ -20,20 +21,16 @@ import qualified Data.Map as Map
 import qualified Data.Text as T
 import Data.Text.Lazy.Encoding (decodeUtf8)
 import Data.Text.Lazy (fromStrict)
-
 import Formatting
 import Network.HTTP (urlEncode)
 import Data.Foldable (for_)
-import Network.HTTP.Types.Header (HeaderName)
 import Network.HTTP.Simple
-       (Request, Response, parseRequest, getResponseHeader,
+       (Request, parseRequest,
         setRequestQueryString, getResponseBody)
 import qualified Data.ByteString.Lazy.Char8 as L8
 import Network.HTTP.Client (newManager, responseBody, Manager, httpLbs, method)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Text.XML (parseText_, def)
-import qualified Data.CaseInsensitive as CI
-import qualified Data.ByteString.Char8 as BytCh
 import Web.Authenticate.OAuth (unCredential, newCredential)
 import System.Environment (getEnv)
 import Data.AppSettings
@@ -44,7 +41,7 @@ import Control.Exception.Safe -- (IOException(..), catches, try, throw, Exceptio
 import System.IO.Error (isDoesNotExistError)
 import qualified Text.Pandoc as Pandoc
 
---| Auth Stuff: API Key and API Secret, get from system environment.
+-- | Auth Stuff: API Key and API Secret, get from system environment.
 getKeysFromEnv :: IO AppCredentials
 getKeysFromEnv = do
   grApiKey    <- getEnv "GOODREADS_API_KEY"
@@ -56,7 +53,7 @@ lookupConfig :: IO (Maybe (Conf, GetSetting))
 lookupConfig = catchJust (guard . isDoesNotExistError) (Just <$> (readSettings (AutoFromAppName "goodreads"))) (\_ -> return Nothing)
 
 saveConfig :: GrConfig -> AppCredentials -> IO ()
-saveConfig cfg appCr = do -- conf? as 2nd arg
+saveConfig cfg _ = do -- conf? as 2nd arg
     let (tokenString, tokenSecretString) = credz (loginCredentials cfg)
     let defaultUID = fromMaybe 0 (defaultUserID cfg)
     let conf1 = setSetting Map.empty oAuthToken tokenString
@@ -74,16 +71,16 @@ initGr man req authMethod = do
                       let secret = getSetting oAuthSecret
                       case secret of
                           "" -> do putStrLn "No OAuth token found" -- getnewsecrets?
-                                   credentials <- grAuthenticate man req authMethod
-                                   let (tokenString, tokenSecretString) = credz credentials
+                                   creds <- grAuthenticate man req authMethod
+                                   let (tokenString, tokenSecretString) = credz creds
                                    
                                    putStrLn "Saved new OAauth token and secret to config file"
                                    let cfg = GrConfig {loginCredentials = newCredential (pack $ tokenString) (pack $ tokenSecretString)
                                                       , defaultUserID = Just (getSetting defaultUser)}
 
-                                   let credentials = (requestAppCredentials req)
-                                   saveConfig cfg credentials
-                                   return $ Gr cfg man credentials
+                                   let crd = (requestAppCredentials req)
+                                   saveConfig cfg crd
+                                   return $ Gr cfg man crd
                           _ -> do
                                  let cfg = GrConfig {loginCredentials = newCredential (pack $ getSetting oAuthToken) (pack $ secret)
                                                    , defaultUserID = Just (getSetting defaultUser)}
@@ -104,13 +101,13 @@ initGr man req authMethod = do
 
 
 
-toHeaderName :: String -> HeaderName
-toHeaderName header = CI.mk (BytCh.pack header)
+--toHeaderName :: String -> HeaderName
+--toHeaderName header = CI.mk (BytCh.pack header)
 
-respInfo :: Response L8.ByteString -> IO ()
-respInfo resp = print $ getResponseHeader (toHeaderName "content-type") resp
+--respInfo :: Response L8.ByteString -> IO ()
+--respInfo resp = print $ getResponseHeader (toHeaderName "content-type") resp
 
---| Begin Api Methods
+-- | Begin Api Methods
 restAPI :: MonadThrow m => Gr -> String -> [(ByteString, Maybe ByteString)] -> m Request
 restAPI gr endpoint params = do
     -- Add API Key to params (if it is not in there FIXME?)
@@ -153,10 +150,10 @@ getUserFollowers conMan user =
     restAPI conMan ("user/" ++ show (uid user) ++ "/followers.xml") []
 
 getFindBooks :: MonadThrow m => Gr -> String -> m Request
-getFindBooks conMan title =
+getFindBooks conMan t =
     restAPI conMan ("search/index.xml") opts where
         opts = [
-            (pack "q", Just $ pack title)] :: [(ByteString, Maybe ByteString)]
+            (pack "q", Just $ pack t    )] :: [(ByteString, Maybe ByteString)]
                                            
 getBooksFromShelf :: MonadThrow m => Gr -> User -> String -> m Request
 getBooksFromShelf conMan user shelf =
@@ -274,7 +271,7 @@ doShowBook opts eBookQ = do
       Just t -> do
           let pd = Pandoc.readHtml Pandoc.def (T.unpack t)
           case pd of
-            Left e -> fail "foo" --e
+            Left _ -> fail "foo" --e
             Right doc -> out $ T.pack (Pandoc.writeMarkdown Pandoc.def doc)
       _ -> fail "failed"
 
@@ -291,11 +288,11 @@ doGr app = do
             Nothing -> do
                         x <- lookupConfig
                         case x of
-                          Just (conf, GetSetting getSetting) -> do
-                              let apiKey = getSetting setApiKey
+                          Just (_, GetSetting getSetting) -> do
+                              let api_Key = getSetting setApiKey
                               let apiSecret = getSetting setApiSecret
-                              case (any null [apiKey,apiSecret]) of
-                                False -> return AppCredentials { applicationKey = pack apiKey
+                              case (any null [api_Key,apiSecret]) of
+                                False -> return AppCredentials { applicationKey = pack api_Key
                                                            , applicationSecret = pack apiSecret}
 
                                 True -> getKeysFromEnv -- not found in args, nor in config file.

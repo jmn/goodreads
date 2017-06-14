@@ -8,10 +8,11 @@ import Data.Text (Text)
 import Data.Monoid ((<>))
 import Control.Applicative
 
+{- Functions for translating XML elements into objects. E.g. "book".
+ -}
 numReviews :: Document -> Int
 numReviews doc = lengthOf ?? doc $ root . el "GoodreadsResponse" ./ el "reviews" ./ el "review"
 
--- tities :: Document -> [DI.Text]
 tities :: Document -> [Text]
 tities doc = doc ^.. root . el "GoodreadsResponse" ./ el "reviews" ./ el "review" ./ el "book" ./ el "title" . text
 
@@ -34,7 +35,6 @@ parseFindBook :: Element -> Maybe Book
 parseFindBook e = Book
   <$> t "title"       
   <*> Just (t "id")
-
   where t n = e ^? el "work" ./ el "best_book" ./ el n . text
 
 parseGoodreadsFeed :: Document -> Either String [Book]
@@ -52,6 +52,5 @@ parseBook :: Element -> Maybe Book
 parseBook e = Book
   <$> t "title"
   <*> Just (t "id")
-  
   where t n = e ^? el "review" ./ el "book" ./ el n . text
 
