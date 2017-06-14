@@ -59,8 +59,8 @@ defaultAuthHandler url = do
     putStrLn "Paste the verification code you are given below and hit enter"
     BS.getLine
 
-signed :: Gr -> Request -> IO (Response L8.ByteString)
-signed mgr resp = do
+signRequest :: Gr -> Request -> IO (Response L8.ByteString)
+signRequest mgr resp = do
     signed_req <- signWithConfig mgr resp
     httpLbs signed_req (connectionManager mgr)
 

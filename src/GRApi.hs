@@ -9,7 +9,7 @@
 module GRApi (doShowShelf, doFindAuthor, doFindBook, doAddBook, doShowBook, getBooksFromShelf, getUserFollowers, getFindAuthorByName, getShowBook) where
 import Types
 import XML
-import Auth
+import Auth (signRequest, grAuthenticate, credz, defaultAuthHandler)
 
 import System.Console.Haskeline
 import Control.Monad (guard)
@@ -208,11 +208,11 @@ doFindBook opts findTitle = do
 
 printListOfBooks :: [Book] -> IO ()
 printListOfBooks books = do
-    let booksEnumerated = (zip [1..] books)
+    let booksEnumerated = (zip [1::Integer ..] books)
     for_ booksEnumerated $ \(i, book) -> do 
         let msg = sformat (int % ": " % text % " [" % text % "]\n") i (fromStrict (title book)) (fromStrict $ fromMaybe "" (bookId book))
         out msg
-
+        
 doShowShelf :: AppOptions -> ShelfName -> UserID -> IO ()
 doShowShelf opts shelf uID = do
     gr <- doGr opts
@@ -227,7 +227,7 @@ doShowShelf opts shelf uID = do
             , name = Nothing  }
             shelf
 
-    resp <-  signed gr req -- try
+    resp <-  signRequest gr req -- try
     let eBooks = respToBooks resp
     case eBooks of
         Right books -> do printListOfBooks books -- for_ books $ \book -> printT $ title book
@@ -246,14 +246,14 @@ doFindAuthor :: AppOptions -> AuthorName -> IO ()
 doFindAuthor opts authorName = do
     gr <- doGr opts
     req <- getFindAuthorByName gr authorName
-    response <- signed gr req
+    response <- signRequest gr req
     L8.putStrLn $ getResponseBody response
 
 doAddBook :: AppOptions -> ShelfName -> BookID -> IO ()
 doAddBook opts shelfName bookID = do
     gr <- doGr opts
     req <- putAddBook gr shelfName bookID
-    response <- signed gr req
+    response <- signRequest gr req
     L8.putStrLn $ getResponseBody response
 
 
@@ -261,7 +261,7 @@ doShowBook :: AppOptions -> BookID -> IO ()
 doShowBook opts eBookQ = do
     gr <- doGr opts
     req <- getShowBook gr eBookQ
-    response <- signed gr req
+    response <- signRequest gr req
     let bookInf = parseBookInfo . parseText_ def . decodeUtf8 . responseBody
 
     let bookInfo = bookInf response
