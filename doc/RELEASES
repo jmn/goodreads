@@ -1,0 +1,7 @@
+Releases are done at GitHub
+
+build and distribute with:
+
+```
+    github-release upload -u jmn --repo goodreads --tag 0.2 --name "goodreads-linux-amd64" --file gr.bz2
+```
