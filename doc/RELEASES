@@ -5,3 +5,29 @@ build and distribute with:
 ```
     github-release upload -u jmn --repo goodreads --tag 0.2 --name "goodreads-linux-amd64" --file gr.bz2
 ```
+1. Set GITHUB_TOKEN environment flag
+2. # make your tag and upload
+   $ git tag 0.XX && git push --tags
+
+# create a formal release
+$ github-release release \
+    --user aktau \
+    --repo gofinance \
+    --tag v0.1.0 \
+    --name "the wolf of source street" \
+    --description "Not a movie, contrary to popular opinion. Still, my first release!" \
+    --pre-release
+
+
+# upload a file, for example the OSX/AMD64 binary of my gofinance app
+$ github-release upload \
+    -u jmn \
+    --repo goodreds \
+    --tag 0.XX \
+    --name "gofinance-osx-amd64" \
+    --file bin/darwin/amd64/gofinance
+
+# upload other files...
+$ github-release upload ...
+
+All from: https://github.com/aktau/github-release
