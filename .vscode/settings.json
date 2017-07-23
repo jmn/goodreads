@@ -1,5 +1,7 @@
-// Place your settings in this file to overwrite default and user settings.
 {
-    "haskell.hlint.executablePath": "/home/jmn/.local/bin/hlint",
-    "haskell.ghcMod.executablePath": "/home/jmn/.local/bin/ghc-mod"
+  "haskell.hlint.executablePath": "/home/jmn/.local/bin/hlint",
+  "haskell.ghcMod.executablePath": "/home/jmn/.local/bin/ghc-mod",
+  "files.exclude": {
+    ".stack-work/*": "explorerExcludedFiles"
+  }
 }
