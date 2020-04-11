@@ -22,7 +22,8 @@ import Data.ByteString.Char8 (pack)
 import qualified Data.ByteString.Lazy.Char8 as L8
 import Data.ByteString.UTF8 (ByteString)
 import Data.Foldable (for_)
-import qualified Data.Text as T
+import qualified Data.Text.IO as T
+import qualified Data.Text as DT
 import Data.Text.Lazy (fromStrict)
 import Data.Text.Lazy.Encoding (decodeUtf8)
 import Formatting
@@ -223,12 +224,12 @@ getBooksFromShelf conMan user shelf =
     opts =
       [(pack "v", Just $ pack "2"), (pack "shelf", Just $ pack shelf)] :: [(ByteString, Maybe ByteString)]
 
-out :: T.Text -> IO ()
+out :: DT.Text -> IO ()
 out txt = runInputT defaultSettings loop
   where
     loop :: InputT IO ()
     loop = do
-      outputStr $ T.unpack txt
+      outputStr $ DT.unpack txt
       return ()
 
 doFindBook :: AppOptions -> String -> IO ()
@@ -307,6 +308,9 @@ doAddBook opts shelfName bookID = do
   response <- signRequest gr req
   L8.putStrLn $ getResponseBody response
 
+htmlToMd html = 
+  Pandoc.runPure $ Pandoc.readHtml Pandoc.def html >>= Pandoc.writeMarkdown Pandoc.def
+
 doShowBook :: AppOptions -> BookID -> IO ()
 doShowBook opts eBookQ = do
   gr <- doGr opts
@@ -316,9 +320,7 @@ doShowBook opts eBookQ = do
   let bookInfo = bookInf response
   L8.putStrLn $ getResponseBody response
   case bookInfo of
-    Just t -> do
-      let pd = Pandoc.readHtml Pandoc.def (T.unpack t)
-      case pd of
-        Left _ -> fail "foo" --e
-        Right doc -> out $ T.pack (Pandoc.writeMarkdown Pandoc.def doc)
-    _ -> fail "failed"
+    Just t -> case htmlToMd t of 
+        Left _ -> fail "Pandoc failed"
+        Right x -> out x
+    _ -> fail "Fetch failed"

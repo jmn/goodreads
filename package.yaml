@@ -10,7 +10,7 @@ license: BSD3
 github: jmn/gr
 executables:
   gr:
-    main: Main.hs
+    main: ../app/Main.hs
     source-dirs:
     - src
     - app
